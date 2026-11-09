@@ -55,7 +55,8 @@ const userKey = makeKeypair();
 const userPubBlob = userKey.pubBlob;
 
 // ── mock sshd ───────────────────────────────────────────────────────
-function startMockSshd() {
+// opts.acceptNone: 服务端接受 none 认证（模拟允许空认证的机器，如嵌入式设备）
+function startMockSshd(opts = {}) {
   return new Promise((resolve) => {
     const srv = new SshServer({ hostKeys: [{ key: hostKey.privPem }] });
     srv.on('error', (e) => console.error('[mock-sshd] error:', e));
@@ -64,6 +65,10 @@ function startMockSshd() {
     srv.on('connection', (client) => {
       // 注意：ssh2 v1.17 的 auth ctx 字段是 method（不是老文档里的 type）
       client.on('authentication', (ctx) => {
+        if (ctx.method === 'none' && opts.acceptNone) {
+          ctx.accept();
+          return;
+        }
         if (ctx.method === 'password') {
           if (ctx.password === PASSWORD) ctx.accept();
           else ctx.reject();
@@ -193,6 +198,12 @@ const base = {
 
 console.log(`mock sshd=127.0.0.1:${port}  agent=${agentSock}`);
 
+// none 探测专用服务器（模拟允许空认证的机器）
+const nonePort = await new Promise((res) => {
+  startMockSshd({ acceptNone: true }).then((srv) => res(srv.address().port));
+});
+console.log(`mock sshd(none)=127.0.0.1:${nonePort}`);
+
 // 1. password 模式
 {
   const s = new RemoteSession({ ...base, authMode: 'password', password: PASSWORD, agent: null });
@@ -316,6 +327,42 @@ console.log(`mock sshd=127.0.0.1:${port}  agent=${agentSock}`);
     check('auto 模式：凭据全被拒时带指引', false, '竟然连上了');
   } catch (e) {
     check('auto 模式：凭据全被拒时带指引', /当前方式/.test(e.message) && /SSH_AUTH_SOCK|ssh-copy-id/.test(e.message), e.message);
+  }
+  s.close();
+}
+
+// 5. none 模式（空认证）
+{
+  // 空字符串密码视同未配置：password 模式下快速失败给指引，不会拿空密码去撞
+  const s = new RemoteSession({ ...base, authMode: 'password', password: '', agent: null });
+  try {
+    await s.ensure();
+    check('password 模式：空串密码快速失败', false, '竟然连上了');
+  } catch (e) {
+    check('password 模式：空串密码快速失败', /没给密码/.test(e.message), e.message);
+  }
+  s.close();
+}
+{
+  // 服务端接受 none 认证时，none 模式免凭据连上
+  const s = new RemoteSession({ host: '127.0.0.1', port: nonePort, username: 'selftest', authMode: 'none', readyTimeout: 10000 });
+  try {
+    await s.ensure();
+    const r = await s.exec('echo hi');
+    check('none 模式：服务端接受空认证则连上', r.stdout === 'mock-ssh-ok' && s.authMethod === 'none', `stdout=${JSON.stringify(r.stdout)} auth=${s.authMethod}`);
+  } catch (e) {
+    check('none 模式：服务端接受空认证则连上', false, e.message);
+  }
+  s.close();
+}
+{
+  // 服务端拒绝 none 时，报错要指路
+  const s = new RemoteSession({ ...base, authMode: 'none', readyTimeout: 10000 });
+  try {
+    await s.ensure();
+    check('none 模式：被拒时报错指路', false, '竟然连上了');
+  } catch (e) {
+    check('none 模式：被拒时报错指路', /空认证/.test(e.message), e.message);
   }
   s.close();
 }

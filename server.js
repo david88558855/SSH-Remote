@@ -48,12 +48,13 @@ const CONFIG = {
   host: requiredEnv('SSH_REMOTE_HOST', '目标机地址或主机名'),
   port: Number(process.env.SSH_REMOTE_PORT ?? 22),
   username: requiredEnv('SSH_REMOTE_USER', '登录用户名'),
-  // 认证方式：auto（默认）| password | key | agent
+  // 认证方式：auto（默认）| password | key | agent | none
   //   password → 用 SSH_REMOTE_PASSWORD
   //   key      → 用 SSH_REMOTE_KEY 指向的私钥
   //   agent    → 走 ssh-agent（免密，凭据由 agent 持有）
+  //   none     → 空认证（服务端允许 none 才能连上，嵌入式设备/测试机偶尔有）
   //   auto     → 有密码用密码、有私钥用私钥、有 agent 用 agent，全带上让服务端挑
-  authMode: ['password', 'key', 'agent'].includes(process.env.SSH_REMOTE_AUTH)
+  authMode: ['password', 'key', 'agent', 'none'].includes(process.env.SSH_REMOTE_AUTH)
     ? process.env.SSH_REMOTE_AUTH
     : 'auto',
   password: process.env.SSH_REMOTE_PASSWORD ?? null,

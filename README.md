@@ -87,7 +87,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_HOST` | ✅ | 目标主机地址 |
 | `SSH_REMOTE_PORT` | | SSH 端口，默认 22 |
 | `SSH_REMOTE_USER` | ✅ | 登录用户名 |
-| `SSH_REMOTE_AUTH` | | 认证方式：`auto`（默认）`password` `key` `agent` |
+| `SSH_REMOTE_AUTH` | | 认证方式：`auto`（默认）`password` `key` `agent` `none` |
 | `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填；`auto` 模式有密码则参与尝试） |
 | `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
 | `SSH_REMOTE_AGENT` | | ssh-agent socket 路径，默认取 `SSH_AUTH_SOCK` |
@@ -100,16 +100,18 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 
 ### 认证方式
 
-三选一，`auto` 模式下也可以不选——手上有啥用啥，服务端挑一个能过的：
+四选一，`auto` 模式下也可以不选——手上有啥用啥，服务端挑一个能过的：
 
 | 方式 | 配置 | 适用场景 |
 |---|---|---|
 | **密码** | `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器；建议配 `SSH_REMOTE_AUTH=password` 强制指定，避免 auto 下私钥优先 |
 | **私钥** | `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
 | **agent** | 起一个 `ssh-agent` 并保证 `SSH_AUTH_SOCK` 可用（或显式设 `SSH_REMOTE_AGENT`） | 真免密：本地不落私钥路径，凭据由 agent 持有，`ssh-add` 后即可连 |
+| **none（空认证）** | `SSH_REMOTE_AUTH=none`，无需任何凭据 | 服务端本身就允许空认证的机器（某些嵌入式设备/内网测试机只校验用户名） |
 
 `auto` 的优先顺序是 privatekey → password → agent（一次握手全带上，由服务端挑）。
-密码连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys`）。
+注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端——真·免凭据的机器请显式设 `SSH_REMOTE_AUTH=none`。
+认证连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys` / 服务端不接受空认证）。
 
 密码方式示例：
 
@@ -123,7 +125,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 }
 ```
 
-密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd + mock ssh-agent，覆盖密码/私钥/agent/auto 四条路径共 12 项断言。
+密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd + mock ssh-agent，覆盖密码/私钥/agent/none/auto 五条路径共 15 项断言。
 
 ## 工具
 

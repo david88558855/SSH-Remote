@@ -37,10 +37,12 @@ export class RemoteSession {
     this.port = opts.port ?? 22;
     this.username = opts.username;
     // ── 认证配置 ──────────────────────────────────────────────────────
-    // authMode: 'auto'（默认）| 'password' | 'key' | 'agent'
+    // authMode: 'auto'（默认）| 'password' | 'key' | 'agent' | 'none'
     //   password → 用 password 字段
     //   key      → 用 keyPath 指向的私钥文件
     //   agent    → 用 ssh-agent（agent 指向 agent 的 unix socket）
+    //   none     → 不带任何凭据，靠 ssh2 的 none 探测（服务端允许空认证才能连上，
+    //              极少见：通常是嵌入式设备或测试机开了 PermitEmptyPasswords 之类）
     //   auto     → 有密码用密码，有可用私钥用私钥，最后才试 agent；
     //              ssh2 允许一次 connect 带多种凭据（按 publickey→password 顺序尝试），
     //              所以 auto 直接把手上有的都带上，由服务端挑一个能过的。
@@ -104,6 +106,12 @@ export class RemoteSession {
         throw new Error(`读私钥失败 ${this.keyPath}（authMode=key 不做回退，密码方式请设 SSH_REMOTE_AUTH=password）`);
       }
       return { auth: { privateKey: key }, method: 'key' };
+    }
+
+    if (mode === 'none') {
+      // 空凭据：ssh2 的 connect 首个 USERAUTH 就是 none 探测，
+      // 服务端接受就直接 ready；不接受则走下面的认证失败指引。
+      return { auth: {}, method: 'none' };
     }
 
     if (mode === 'agent') {
@@ -181,7 +189,9 @@ export class RemoteSession {
             ? '密码不对，或服务端禁用了密码登录（检查 sshd_config 的 PasswordAuthentication）'
             : mode === 'key'
               ? '公钥不在目标机的 authorized_keys 里，或私钥不对'
-              : '凭据均被拒绝：检查密码是否正确 / 公钥是否已 ssh-copy-id / agent 里是否 ssh-add 过';
+              : mode === 'none'
+                ? '服务端不接受空认证（none）：需要配密码/私钥/agent 之一，改 SSH_REMOTE_AUTH 并提供凭据'
+                : '凭据均被拒绝：检查密码是否正确 / 公钥是否已 ssh-copy-id / agent 里是否 ssh-add 过';
           err.message = `${err.message}（${this.username}@${this.host}，当前方式: ${mode}。${hint}）`;
         }
         this.lastError = err;
