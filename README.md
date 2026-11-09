@@ -62,7 +62,7 @@ npm install
 }
 ```
 
-必填 `SSH_REMOTE_HOST` / `SSH_REMOTE_USER` / `SSH_REMOTE_BASE`；不填会在启动时直接报错并告诉你怎么配，而不是拿着空主机名去连、报一堆看不懂的 ssh 错误。
+必填 `SSH_REMOTE_HOST` / `SSH_REMOTE_USER` / `SSH_REMOTE_AUTH` / `SSH_REMOTE_BASE`；不填会在启动时直接报错并告诉你怎么配，而不是拿着空主机名去连、报一堆看不懂的 ssh 错误。
 
 新 server 需要在客户端的连接器管理里 Trust，并**重启客户端**才会加载。
 
@@ -102,10 +102,10 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 `SSH_REMOTE_AUTH` **必填**，三选一，不做自动探测：
 
 | 方式 | 配置 | 适用场景 |
-|----|----|----|
-|       **密码**     | `SSH_REMOTE_AUTH=password` + `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器 |
-|       **私钥**     | `SSH_REMOTE_AUTH=key` + `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
-|       **none              （空认证）**     | `SSH_REMOTE_AUTH=none`，无需任何凭据 | 服务端本身就允许空认证的机器（某些嵌入式设备/内网测试机只校验用户名） |
+|---|---|---|
+| **密码** | `SSH_REMOTE_AUTH=password` + `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器 |
+| **私钥** | `SSH_REMOTE_AUTH=key` + `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
+| **none**<br>（空认证） | `SSH_REMOTE_AUTH=none`，无需任何凭据 | 服务端本身就允许空认证的机器（某些嵌入式设备/内网测试机只校验用户名） |
 
 没有 auto、没有 agent、没有回退——配置缺什么直接快速失败，报错带指引。
 注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端。
