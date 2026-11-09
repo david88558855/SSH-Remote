@@ -46,7 +46,7 @@ export class RemoteSession {
     const VALID_MODES = ['password', 'key', 'none'];
     if (!VALID_MODES.includes(opts.authMode)) {
       throw new Error(
-        `authMode 必填且三选一：${VALID_MODES.join(' / ')}（环境变量 SSH_REMOTE_AUTH）`,
+        `authMode 必填且三选一：${VALID_MODES.join(' / ')}（环境变量 SSH_REMOTE_MODE）`,
       );
     }
     this.authMode = opts.authMode;
@@ -89,7 +89,7 @@ export class RemoteSession {
 
     if (mode === 'password') {
       if (!this.password) {
-        throw new Error(`SSH_REMOTE_AUTH=password 但没给密码：请设置 SSH_REMOTE_PASSWORD`);
+        throw new Error(`SSH_REMOTE_MODE=password 但没给密码：请设置 SSH_REMOTE_PASSWORD`);
       }
       return { auth: { password: this.password }, method: 'password' };
     }
@@ -101,7 +101,7 @@ export class RemoteSession {
       } catch {
         throw new Error(
           `读私钥失败 ${this.keyPath}。请确认文件存在可读，或用 SSH_REMOTE_KEY 指定路径；` +
-          `用密码登录请改 SSH_REMOTE_AUTH=password`,
+          `用密码登录请改 SSH_REMOTE_MODE=password`,
         );
       }
       return { auth: { privateKey: key }, method: 'key' };
@@ -152,7 +152,7 @@ export class RemoteSession {
             ? '密码不对，或服务端禁用了密码登录（检查 sshd_config 的 PasswordAuthentication）'
             : mode === 'key'
               ? '公钥不在目标机的 authorized_keys 里，或私钥不对'
-              : '服务端不接受空认证（none）：改用 SSH_REMOTE_AUTH=password 或 key 并提供凭据';
+              : '服务端不接受空认证（none）：改用 SSH_REMOTE_MODE=password 或 key 并提供凭据';
           err.message = `${err.message}（${this.username}@${this.host}，当前方式: ${mode}。${hint}）`;
         }
         this.lastError = err;

@@ -9,7 +9,7 @@
  *
  * 目标机器完全由环境变量决定，换机器/多机器并行都只需改配置：
  *   SSH_REMOTE_HOST / SSH_REMOTE_PORT / SSH_REMOTE_USER
- *   SSH_REMOTE_AUTH（必填三选一：password|key|none）+ 对应凭据变量
+ *   SSH_REMOTE_MODE（必填三选一：password|key|none）+ 对应凭据变量
  *   SSH_REMOTE_BASE / SSH_REMOTE_HOME
  * 同一台机器只需注册一个 server；不同机器才注册多个条目（名字区分，如 ssh-remote-2）。
  *
@@ -36,7 +36,7 @@ function requiredEnv(name, hint) {
       `  在 MCP 客户端配置里给 ssh-remote 加env 段，例如：\n` +
       `  "env": { "${name}": "实际值" }\n` +
       `  完整变量：SSH_REMOTE_HOST / SSH_REMOTE_PORT / SSH_REMOTE_USER /\n` +
-      `            SSH_REMOTE_AUTH(password|key|none，必填) / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY /\n` +
+      `            SSH_REMOTE_MODE(password|key|none，必填) / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY /\n` +
       `            SSH_REMOTE_BASE / SSH_REMOTE_HOME`,
     );
     process.exit(1);
@@ -47,15 +47,15 @@ function requiredEnv(name, hint) {
 // 认证方式必填，三选一：password（SSH_REMOTE_PASSWORD）/ key（SSH_REMOTE_KEY）/
 // none（空认证，服务端允许才连得上）。不做自动探测——配错了直接快速失败并给指引。
 const AUTH_MODES = ['password', 'key', 'none'];
-const authMode = process.env.SSH_REMOTE_AUTH;
+const authMode = process.env.SSH_REMOTE_MODE;
 if (!AUTH_MODES.includes(authMode)) {
   console.error(
-    `[ssh-remote] 缺少或非法的 SSH_REMOTE_AUTH（当前值: ${authMode === undefined ? '未设置' : JSON.stringify(authMode)}）。\n` +
+    `[ssh-remote] 缺少或非法的 SSH_REMOTE_MODE（当前值: ${authMode === undefined ? '未设置' : JSON.stringify(authMode)}）。\n` +
     `  必填，三选一：\n` +
     `    password → 密码认证，另配 SSH_REMOTE_PASSWORD\n` +
     `    key      → 私钥认证，另配 SSH_REMOTE_KEY（默认 ~/.ssh/id_ed25519）\n` +
     `    none     → 空认证（服务端只校验用户名时可用），无需其他凭据\n` +
-    `  示例："env": { ..., "SSH_REMOTE_AUTH": "password", "SSH_REMOTE_PASSWORD": "..." }`,
+    `  示例："env": { ..., "SSH_REMOTE_MODE": "password", "SSH_REMOTE_PASSWORD": "..." }`,
   );
   process.exit(1);
 }
