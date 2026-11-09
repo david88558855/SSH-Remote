@@ -36,7 +36,18 @@ export class RemoteSession {
     this.host = opts.host;
     this.port = opts.port ?? 22;
     this.username = opts.username;
+    // ── 认证配置 ──────────────────────────────────────────────────────
+    // authMode: 'auto'（默认）| 'password' | 'key' | 'agent'
+    //   password → 用 password 字段
+    //   key      → 用 keyPath 指向的私钥文件
+    //   agent    → 用 ssh-agent（agent 指向 agent 的 unix socket）
+    //   auto     → 有密码用密码，有可用私钥用私钥，最后才试 agent；
+    //              ssh2 允许一次 connect 带多种凭据（按 publickey→password 顺序尝试），
+    //              所以 auto 直接把手上有的都带上，由服务端挑一个能过的。
+    this.authMode = opts.authMode ?? 'auto';
+    this.password = opts.password ?? null;
     this.keyPath = opts.keyPath ?? path.join(os.homedir(), '.ssh', 'id_ed25519');
+    this.agent = opts.agent ?? process.env.SSH_AUTH_SOCK ?? null;
     this.readyTimeout = opts.readyTimeout ?? 20000;
     this.keepaliveInterval = opts.keepaliveInterval ?? 15000;
     this.keepaliveCountMax = opts.keepaliveCountMax ?? 3;
@@ -46,6 +57,8 @@ export class RemoteSession {
     this.lastError = null;
     this._connecting = null;
     this._sftp = null;
+    // 实际生效的认证方式，连上后回填，供 remote_health 展示
+    this.authMethod = null;
   }
 
   get isConnected() {
@@ -62,13 +75,79 @@ export class RemoteSession {
     return this._connecting;
   }
 
+  /**
+   * 按 authMode 组装 ssh2 connect 的凭据段。
+   * 返回 { auth: {...}, method: 'password'|'key'|'agent'|'multi' }
+   * 凭据不满足时抛带配置指引的错误，而不是拿着空凭据去连。
+   */
+  _buildAuth() {
+    const mode = this.authMode;
+
+    const readKey = () => {
+      try {
+        return fs.readFileSync(this.keyPath);
+      } catch {
+        return null;
+      }
+    };
+
+    if (mode === 'password') {
+      if (!this.password) {
+        throw new Error(`authMode=password 但没给密码：请设置 SSH_REMOTE_PASSWORD`);
+      }
+      return { auth: { password: this.password }, method: 'password' };
+    }
+
+    if (mode === 'key') {
+      const key = readKey();
+      if (!key) {
+        throw new Error(`读私钥失败 ${this.keyPath}（authMode=key 不做回退，密码方式请设 SSH_REMOTE_AUTH=password）`);
+      }
+      return { auth: { privateKey: key }, method: 'key' };
+    }
+
+    if (mode === 'agent') {
+      if (!this.agent) {
+        throw new Error('authMode=agent 但没有可用的 ssh-agent（SSH_AUTH_SOCK 未设置）');
+      }
+      return { auth: { agent: this.agent }, method: 'agent' };
+    }
+
+    // auto：把手上的凭据都带上，ssh2 按 publickey → password 顺序逐个试。
+    // 私钥读不到不算错——也许用户就是想走密码。
+    const auth = {};
+    const used = [];
+    const key = readKey();
+    if (key) {
+      auth.privateKey = key;
+      used.push('key');
+    }
+    if (this.password) {
+      auth.password = this.password;
+      used.push('password');
+    }
+    if (this.agent) {
+      auth.agent = this.agent;
+      used.push('agent');
+    }
+    if (used.length === 0) {
+      throw new Error(
+        `没有任何可用凭据（host=${this.host}）。三种配法任选其一：\n` +
+        `  1. 密码：  "env": { "SSH_REMOTE_PASSWORD": "你的密码" }\n` +
+        `  2. 私钥：  把私钥放到 ${this.keyPath}，或 "env": { "SSH_REMOTE_KEY": "/path/to/key" }\n` +
+        `  3. agent： 启动 ssh-agent 并设置 SSH_AUTH_SOCK（ssh-add 后免密连接）`,
+      );
+    }
+    return { auth, method: used.length === 1 ? used[0] : used.join('+') };
+  }
+
   _connect() {
     return new Promise((resolve, reject) => {
-      let key;
+      let auth;
       try {
-        key = fs.readFileSync(this.keyPath);
+        auth = this._buildAuth();
       } catch (e) {
-        reject(new Error(`读私钥失败 ${this.keyPath}: ${e.message}`));
+        reject(e);
         return;
       }
 
@@ -89,10 +168,22 @@ export class RemoteSession {
         this.conn = conn;
         this.disposed = false;
         this.lastError = null;
+        this.authMethod = auth.method;
         resolve(conn);
       });
 
       conn.on('error', (err) => {
+        // 认证被拒时补一句怎么改配置——原始报错只有一句 "All configured
+        // authentication methods failed"，用户看到不知道从哪下手。
+        if (/all configured authentication methods failed/i.test(err.message ?? '')) {
+          const mode = this.authMode;
+          const hint = mode === 'password'
+            ? '密码不对，或服务端禁用了密码登录（检查 sshd_config 的 PasswordAuthentication）'
+            : mode === 'key'
+              ? '公钥不在目标机的 authorized_keys 里，或私钥不对'
+              : '凭据均被拒绝：检查密码是否正确 / 公钥是否已 ssh-copy-id / agent 里是否 ssh-add 过';
+          err.message = `${err.message}（${this.username}@${this.host}，当前方式: ${mode}。${hint}）`;
+        }
         this.lastError = err;
         this._teardown();
         if (!settled) {
@@ -115,10 +206,10 @@ export class RemoteSession {
         host: this.host,
         port: this.port,
         username: this.username,
-        privateKey: key,
         readyTimeout: this.readyTimeout,
         keepaliveInterval: this.keepaliveInterval,
         keepaliveCountMax: this.keepaliveCountMax,
+        ...auth.auth,
       });
     });
   }

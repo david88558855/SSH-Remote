@@ -87,7 +87,10 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_HOST` | ✅ | 目标主机地址 |
 | `SSH_REMOTE_PORT` | | SSH 端口，默认 22 |
 | `SSH_REMOTE_USER` | ✅ | 登录用户名 |
-| `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519` |
+| `SSH_REMOTE_AUTH` | | 认证方式：`auto`（默认）`password` `key` `agent` |
+| `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填；`auto` 模式有密码则参与尝试） |
+| `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
+| `SSH_REMOTE_AGENT` | | ssh-agent socket 路径，默认取 `SSH_AUTH_SOCK` |
 | `SSH_REMOTE_BASE` | ✅ | 远端工作目录，**必须是绝对路径** |
 | `SSH_REMOTE_HOME` | | `~` 展开的基准，默认 `/home/$SSH_REMOTE_USER` |
 
@@ -95,7 +98,32 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 
 **换机器**：改`env` 段，重启客户端。**多台机器并行**：复制一份目录，在配置里注册第二个条目、换个名字（工具前缀随之区分，如 `mcp__ssh-remote-2__*`）。同一台机器不需要多个 server。
 
-**免密登录**：把公钥放进目标机`~/.ssh/authorized_keys`（`ssh-copy-id`）。
+### 认证方式
+
+三选一，`auto` 模式下也可以不选——手上有啥用啥，服务端挑一个能过的：
+
+| 方式 | 配置 | 适用场景 |
+|---|---|---|
+| **密码** | `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器；建议配 `SSH_REMOTE_AUTH=password` 强制指定，避免 auto 下私钥优先 |
+| **私钥** | `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
+| **agent** | 起一个 `ssh-agent` 并保证 `SSH_AUTH_SOCK` 可用（或显式设 `SSH_REMOTE_AGENT`） | 真免密：本地不落私钥路径，凭据由 agent 持有，`ssh-add` 后即可连 |
+
+`auto` 的优先顺序是 privatekey → password → agent（一次握手全带上，由服务端挑）。
+密码连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys`）。
+
+密码方式示例：
+
+```json
+"env": {
+  "SSH_REMOTE_HOST": "192.168.0.110",
+  "SSH_REMOTE_USER": "yourname",
+  "SSH_REMOTE_PASSWORD": "yourpassword",
+  "SSH_REMOTE_AUTH": "password",
+  "SSH_REMOTE_BASE": "/home/yourname/work/yourproject"
+}
+```
+
+密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd + mock ssh-agent，覆盖密码/私钥/agent/auto 四条路径共 12 项断言。
 
 ## 工具
 
@@ -155,6 +183,7 @@ curses 程序、长跑任务中途看进度都适用。
 node mcp-probe.js        # 跑通全部工具 + 后台任务三件套
 node smoke-test.js       # 量化握手开销vs 连接复用
 node bg-selftest.js      # 拿真实长任务验「起任务不阻塞」
+node auth-selftest.js    # 认证自测：密码/私钥/agent/auto，不需要真实远端机
 ```
 
 ## 安全边界
