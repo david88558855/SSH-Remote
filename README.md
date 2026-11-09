@@ -87,10 +87,9 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_HOST` | ✅ | 目标主机地址 |
 | `SSH_REMOTE_PORT` | | SSH 端口，默认 22 |
 | `SSH_REMOTE_USER` | ✅ | 登录用户名 |
-| `SSH_REMOTE_AUTH` | | 认证方式：`auto`（默认）`password` `key` `agent` `none` |
-| `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填；`auto` 模式有密码则参与尝试） |
+| `SSH_REMOTE_AUTH` | ✅ | 认证方式，**必填三选一**：`password` `key` `none`（缺省或非法值启动即失败并给指引） |
+| `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填） |
 | `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
-| `SSH_REMOTE_AGENT` | | ssh-agent socket 路径，默认取 `SSH_AUTH_SOCK` |
 | `SSH_REMOTE_BASE` | ✅ | 远端工作目录，**必须是绝对路径** |
 | `SSH_REMOTE_HOME` | | `~` 展开的基准，默认 `/home/$SSH_REMOTE_USER` |
 
@@ -100,17 +99,16 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 
 ### 认证方式
 
-四选一，`auto` 模式下也可以不选——手上有啥用啥，服务端挑一个能过的：
+`SSH_REMOTE_AUTH` **必填**，三选一，不做自动探测：
 
 | 方式 | 配置 | 适用场景 |
 |---|---|---|
-| **密码** | `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器；建议配 `SSH_REMOTE_AUTH=password` 强制指定，避免 auto 下私钥优先 |
-| **私钥** | `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
-| **agent** | 起一个 `ssh-agent` 并保证 `SSH_AUTH_SOCK` 可用（或显式设 `SSH_REMOTE_AGENT`） | 真免密：本地不落私钥路径，凭据由 agent 持有，`ssh-add` 后即可连 |
+| **密码** | `SSH_REMOTE_AUTH=password` + `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器 |
+| **私钥** | `SSH_REMOTE_AUTH=key` + `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
 | **none（空认证）** | `SSH_REMOTE_AUTH=none`，无需任何凭据 | 服务端本身就允许空认证的机器（某些嵌入式设备/内网测试机只校验用户名） |
 
-`auto` 的优先顺序是 privatekey → password → agent（一次握手全带上，由服务端挑）。
-注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端——真·免凭据的机器请显式设 `SSH_REMOTE_AUTH=none`。
+没有 auto、没有 agent、没有回退——配置缺什么直接快速失败，报错带指引。
+注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端。
 认证连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys` / 服务端不接受空认证）。
 
 密码方式示例：
@@ -125,7 +123,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 }
 ```
 
-密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd + mock ssh-agent，覆盖密码/私钥/agent/none/auto 五条路径共 15 项断言。
+密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式及非法 authMode 校验共 13 项断言。
 
 ## 工具
 
@@ -185,7 +183,7 @@ curses 程序、长跑任务中途看进度都适用。
 node mcp-probe.js        # 跑通全部工具 + 后台任务三件套
 node smoke-test.js       # 量化握手开销vs 连接复用
 node bg-selftest.js      # 拿真实长任务验「起任务不阻塞」
-node auth-selftest.js    # 认证自测：密码/私钥/agent/auto，不需要真实远端机
+node auth-selftest.js    # 认证自测：密码/私钥/none 三选一，不需要真实远端机
 ```
 
 ## 安全边界

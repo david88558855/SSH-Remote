@@ -1,6 +1,6 @@
 {
   "name": "ssh-remote-mcp",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "type": "module",
   "description": "常驻 SSH 长连接 MCP server（通用）：让 WorkBuddy 直接读写远端文件、执行远端命令，无需每次新建 SSH 连接。目标机由 SSH_REMOTE_* 环境变量决定",
   "main": "server.js",

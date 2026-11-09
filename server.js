@@ -9,7 +9,7 @@
  *
  * 目标机器完全由环境变量决定，换机器/多机器并行都只需改配置：
  *   SSH_REMOTE_HOST / SSH_REMOTE_PORT / SSH_REMOTE_USER
- *   SSH_REMOTE_AUTH / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY / SSH_REMOTE_AGENT
+ *   SSH_REMOTE_AUTH（必填三选一：password|key|none）+ 对应凭据变量
  *   SSH_REMOTE_BASE / SSH_REMOTE_HOME
  * 同一台机器只需注册一个 server；不同机器才注册多个条目（名字区分，如 ssh-remote-2）。
  *
@@ -36,7 +36,7 @@ function requiredEnv(name, hint) {
       `  在 MCP 客户端配置里给 ssh-remote 加env 段，例如：\n` +
       `  "env": { "${name}": "实际值" }\n` +
       `  完整变量：SSH_REMOTE_HOST / SSH_REMOTE_PORT / SSH_REMOTE_USER /\n` +
-      `            SSH_REMOTE_AUTH(password|key|agent) / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY / SSH_REMOTE_AGENT /\n` +
+      `            SSH_REMOTE_AUTH(password|key|none，必填) / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY /\n` +
       `            SSH_REMOTE_BASE / SSH_REMOTE_HOME`,
     );
     process.exit(1);
@@ -44,22 +44,29 @@ function requiredEnv(name, hint) {
   return v;
 }
 
+// 认证方式必填，三选一：password（SSH_REMOTE_PASSWORD）/ key（SSH_REMOTE_KEY）/
+// none（空认证，服务端允许才连得上）。不做自动探测——配错了直接快速失败并给指引。
+const AUTH_MODES = ['password', 'key', 'none'];
+const authMode = process.env.SSH_REMOTE_AUTH;
+if (!AUTH_MODES.includes(authMode)) {
+  console.error(
+    `[ssh-remote] 缺少或非法的 SSH_REMOTE_AUTH（当前值: ${authMode === undefined ? '未设置' : JSON.stringify(authMode)}）。\n` +
+    `  必填，三选一：\n` +
+    `    password → 密码认证，另配 SSH_REMOTE_PASSWORD\n` +
+    `    key      → 私钥认证，另配 SSH_REMOTE_KEY（默认 ~/.ssh/id_ed25519）\n` +
+    `    none     → 空认证（服务端只校验用户名时可用），无需其他凭据\n` +
+    `  示例："env": { ..., "SSH_REMOTE_AUTH": "password", "SSH_REMOTE_PASSWORD": "..." }`,
+  );
+  process.exit(1);
+}
+
 const CONFIG = {
   host: requiredEnv('SSH_REMOTE_HOST', '目标机地址或主机名'),
   port: Number(process.env.SSH_REMOTE_PORT ?? 22),
   username: requiredEnv('SSH_REMOTE_USER', '登录用户名'),
-  // 认证方式：auto（默认）| password | key | agent | none
-  //   password → 用 SSH_REMOTE_PASSWORD
-  //   key      → 用 SSH_REMOTE_KEY 指向的私钥
-  //   agent    → 走 ssh-agent（免密，凭据由 agent 持有）
-  //   none     → 空认证（服务端允许 none 才能连上，嵌入式设备/测试机偶尔有）
-  //   auto     → 有密码用密码、有私钥用私钥、有 agent 用 agent，全带上让服务端挑
-  authMode: ['password', 'key', 'agent', 'none'].includes(process.env.SSH_REMOTE_AUTH)
-    ? process.env.SSH_REMOTE_AUTH
-    : 'auto',
+  authMode,
   password: process.env.SSH_REMOTE_PASSWORD ?? null,
   keyPath: process.env.SSH_REMOTE_KEY ?? path.join(os.homedir(), '.ssh', 'id_ed25519'),
-  agent: process.env.SSH_REMOTE_AGENT ?? process.env.SSH_AUTH_SOCK ?? null,
   // 相对路径的解析基准。必须是**绝对路径**：baseDir 会被拼进远端 `cd "..."`，
   // 双引号里~ 不做展开，写成 ~/work/xxx 会直接 cd 失败。
   baseDir: requiredEnv('SSH_REMOTE_BASE', '远端工作目录的绝对路径'),
@@ -78,7 +85,6 @@ const session = new RemoteSession({
   authMode: CONFIG.authMode,
   password: CONFIG.password,
   keyPath: CONFIG.keyPath,
-  agent: CONFIG.agent,
 });
 
 /** 相对路径基于 baseDir；~ 开头基于 homeDir；绝对路径原样返回 */
