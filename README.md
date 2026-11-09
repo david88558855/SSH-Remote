@@ -55,7 +55,7 @@ npm install
       "env": {
         "SSH_REMOTE_HOST": "192.168.0.110",
         "SSH_REMOTE_USER": "yourname",
-        "SSH_REMOTE_BASE": "/home/yourname/work/yourproject"
+        "SSH_REMOTE_BASE": "/home/yourname/work"
       }
     }
   }
@@ -121,7 +121,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
   "SSH_REMOTE_USER": "yourname",
   "SSH_REMOTE_AUTH": "password",
   "SSH_REMOTE_PASSWORD": "yourpassword",
-  "SSH_REMOTE_BASE": "/home/yourname/work/"
+  "SSH_REMOTE_BASE": "/home/yourname/work"
 }
 ```
 
