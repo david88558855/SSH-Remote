@@ -9,7 +9,7 @@
  *   3. none 模式（服务端允许空认证则连上、被拒时指路）
  *   4. authMode 非法值/缺省 → 构造时直接拒绝
  *
- * 认证方式三选一必填：password | key | none（环境变量 SSH_REMOTE_MODE）。
+ * 认证方式三选一必填：password | key | none（环境变量 SSH_REMOTE_AUTH）。
  *
  * 跑法：node auth-selftest.js（退出码非 0 即有失败）
  */
@@ -185,7 +185,7 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
     await s.ensure();
     check('key 模式：私钥缺失时报指引', false, '竟然连上了');
   } catch (e) {
-    check('key 模式：私钥缺失时报指引', /SSH_REMOTE_KEY/.test(e.message) || /SSH_REMOTE_MODE=password/.test(e.message), e.message);
+    check('key 模式：私钥缺失时报指引', /SSH_REMOTE_KEY/.test(e.message) || /SSH_REMOTE_AUTH=password/.test(e.message), e.message);
   }
   s.close();
 }
@@ -222,7 +222,7 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
     } catch (e) {
       threw = e.message;
     }
-    check(`authMode=${bad === undefined ? '(未传)' : JSON.stringify(bad)}：构造时拒绝`, /三选一/.test(threw) && /SSH_REMOTE_MODE/.test(threw), threw || '没抛错');
+    check(`authMode=${bad === undefined ? '(未传)' : JSON.stringify(bad)}：构造时拒绝`, /三选一/.test(threw) && /SSH_REMOTE_AUTH/.test(threw), threw || '没抛错');
   }
 }
 
