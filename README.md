@@ -88,7 +88,8 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_PORT` | | SSH 端口，默认 22 |
 | `SSH_REMOTE_USER` | ✅ | 登录用户名 |
 | `SSH_REMOTE_AUTH` | ✅ | 认证方式，**必填三选一**：`password` `key` `none`（缺省或非法值启动即失败并给指引） |
-| `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填） |
+| `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填其一：设本变量，或配 password.xlsx 密码表） |
+| `SSH_REMOTE_PASSWORD_FILE` | | 密码表路径，缺省为程序目录下的 `password.xlsx`（`password` 模式且未设 `SSH_REMOTE_PASSWORD` 时使用） |
 | `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
 | `SSH_REMOTE_BASE` | ✅ | 远端工作目录，**必须是绝对路径** |
 | `SSH_REMOTE_HOME` | | `~` 展开的基准，默认 `/home/$SSH_REMOTE_USER` |
@@ -103,7 +104,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 
 | 方式 | 配置 | 适用场景 |
 |:---:|---|---|
-| **密码** | `SSH_REMOTE_AUTH=password` + `SSH_REMOTE_PASSWORD` | 最省事，适合没有公钥管理流程的机器 |
+| **密码** | `SSH_REMOTE_AUTH=password` + `SSH_REMOTE_PASSWORD`（或 password.xlsx 密码表，见下） | 最省事，适合没有公钥管理流程的机器 |
 | **私钥** | `SSH_REMOTE_AUTH=key` + `SSH_REMOTE_KEY`（或放默认路径） | 常规做法，公钥 `ssh-copy-id` 进目标机 |
 | **none**<br>（⁠空⁠认⁠证⁠） | `SSH_REMOTE_AUTH=none`，无需任何凭据 | 服务端本身就允许空认证的机器（某些嵌入式设备/内网测试机只校验用户名） |
 

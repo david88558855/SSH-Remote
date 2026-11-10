@@ -89,7 +89,10 @@ export class RemoteSession {
 
     if (mode === 'password') {
       if (!this.password) {
-        throw new Error(`SSH_REMOTE_AUTH=password 但没给密码：请设置 SSH_REMOTE_PASSWORD`);
+        throw new Error(
+          `SSH_REMOTE_AUTH=password 但没有密码：请设置 SSH_REMOTE_PASSWORD，` +
+          `或在密码表 password.xlsx 中加入该主机的记录（格式见 password.example.xlsx）`,
+        );
       }
       return { auth: { password: this.password }, method: 'password' };
     }

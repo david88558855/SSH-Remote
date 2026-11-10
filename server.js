@@ -17,12 +17,15 @@
  * stdout 专供 MCP 协议使用，任何日志都必须走 stderr。
  */
 
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { RemoteSession, shellQuote } from './ssh-session.js';
+import { resolvePassword } from './password-file.js';
 
 /**
  * 目标机配置全部走环境变量，必填项缺失就在启动时直接报错并告诉用户怎么配——
@@ -36,8 +39,8 @@ function requiredEnv(name, hint) {
       `  在 MCP 客户端配置里给 ssh-remote 加env 段，例如：\n` +
       `  "env": { "${name}": "实际值" }\n` +
       `  完整变量：SSH_REMOTE_HOST / SSH_REMOTE_PORT / SSH_REMOTE_USER /\n` +
-      `            SSH_REMOTE_AUTH(password|key|none，必填) / SSH_REMOTE_PASSWORD / SSH_REMOTE_KEY /\n` +
-      `            SSH_REMOTE_BASE / SSH_REMOTE_HOME`,
+      `            SSH_REMOTE_AUTH(password|key|none，必填) / SSH_REMOTE_PASSWORD / SSH_REMOTE_PASSWORD_FILE /\n` +
+      `            SSH_REMOTE_KEY / SSH_REMOTE_BASE / SSH_REMOTE_HOME`,
     );
     process.exit(1);
   }
@@ -65,7 +68,7 @@ const CONFIG = {
   port: Number(process.env.SSH_REMOTE_PORT ?? 22),
   username: requiredEnv('SSH_REMOTE_USER', '登录用户名'),
   authMode,
-  password: process.env.SSH_REMOTE_PASSWORD ?? null,
+  password: null, // password 模式在下面统一解析（env 优先，其次 password.xlsx）
   keyPath: process.env.SSH_REMOTE_KEY ?? path.join(os.homedir(), '.ssh', 'id_ed25519'),
   // 相对路径的解析基准。必须是**绝对路径**：baseDir 会被拼进远端 `cd "..."`，
   // 双引号里~ 不做展开，写成 ~/work/xxx 会直接 cd 失败。
@@ -73,6 +76,56 @@ const CONFIG = {
   // ~ 展开的基准。默认从 username 推导，避免用户名不同却仍写死旧 home
   homeDir: process.env.SSH_REMOTE_HOME ?? `/home/${process.env.SSH_REMOTE_USER ?? ''}`,
 };
+
+// ── password 模式的密码来源 ─────────────────────────────────────────
+// 优先级：环境变量 SSH_REMOTE_PASSWORD > 密码表 password.xlsx（按主机名查）。
+// 密码表路径由 SSH_REMOTE_PASSWORD_FILE 指定，缺省为程序目录下的 password.xlsx
+// （与 Remote-SSH 的 password.xlsx 同格式：第 1 列主机名、第 2 列密码）。
+// 都没有 → 启动即报错并给两条路，绝不拿着空密码去连。
+const passwordFile = process.env.SSH_REMOTE_PASSWORD_FILE
+  ?? fileURLToPath(new URL('./password.xlsx', import.meta.url));
+let passwordSource = null;
+if (authMode === 'password') {
+  // 显式指定的密码表必须存在——配置错了宁可快速失败，也不当没配过
+  if (process.env.SSH_REMOTE_PASSWORD_FILE && !fs.existsSync(passwordFile)) {
+    console.error(
+      `[ssh-remote] SSH_REMOTE_PASSWORD_FILE 指定的文件不存在：${passwordFile}\n` +
+      `  请确认路径正确（支持相对 MCP 客户端工作目录，建议写绝对路径），\n` +
+      `  或去掉该变量改用缺省位置：程序目录下的 password.xlsx`,
+    );
+    process.exit(1);
+  }
+  let r;
+  try {
+    r = resolvePassword({
+      host: CONFIG.host,
+      envPassword: process.env.SSH_REMOTE_PASSWORD || null, // 空串视同未配置
+      passwordFile,
+    });
+  } catch (e) {
+    console.error(`[ssh-remote] ${e.message}`);
+    process.exit(1);
+  }
+  if (!r.password) {
+    const fileState = fs.existsSync(passwordFile)
+      ? `存在，但没有主机 "${CONFIG.host}" 的记录`
+      : '文件不存在';
+    console.error(
+      `[ssh-remote] SSH_REMOTE_AUTH=password 但没有找到密码。\n` +
+      `  已按顺序尝试（显式配置优先，不做自动探测）：\n` +
+      `    1. 环境变量 SSH_REMOTE_PASSWORD —— 未设置\n` +
+      `    2. 密码表 ${passwordFile} —— ${fileState}\n` +
+      `  二选一：\n` +
+      `    a. env 里加 "SSH_REMOTE_PASSWORD": "密码"\n` +
+      `    b. 密码表里加一行：第 1 列 "${CONFIG.host}"，第 2 列密码\n` +
+      `       （xlsx 格式同 Remote-SSH 的 password.xlsx，模板见 password.example.xlsx；\n` +
+      `        可用 SSH_REMOTE_PASSWORD_FILE 指定其他路径）`,
+    );
+    process.exit(1);
+  }
+  CONFIG.password = r.password;
+  passwordSource = r.source;
+}
 
 // 后台任务的状态目录。放 /tmp 而不是项目里：任务日志不该进 git，也不该被
 // 任何目录遍历工具扫到。/tmp 在 Linux 上重启即失，恰好符合「日志是临时的」这层意思。
@@ -408,6 +461,7 @@ const handlers = {
         connectOrEnsureMs: Date.now() - start,
         target: `${CONFIG.username}@${CONFIG.host}:${CONFIG.port}`,
         auth: session.authMethod ?? CONFIG.authMode,
+        passwordSource: passwordSource ?? null,
         keyPath: CONFIG.keyPath,
         baseDir: CONFIG.baseDir,
         server: r.stdout.trim().replace(/\n/g, ' | '),
@@ -670,4 +724,4 @@ process.on('SIGTERM', () => { session.close(); process.exit(0); });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`[ssh-remote] MCP server 已就绪 target=${CONFIG.username}@${CONFIG.host} auth=${CONFIG.authMode} base=${CONFIG.baseDir}`);
+console.error(`[ssh-remote] MCP server 已就绪 target=${CONFIG.username}@${CONFIG.host} auth=${CONFIG.authMode}${passwordSource ? `(${passwordSource === 'SSH_REMOTE_PASSWORD' ? 'env' : 'xlsx'})` : ''} base=${CONFIG.baseDir}`);

@@ -160,7 +160,7 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
     await s.ensure();
     check('password 模式：空串密码快速失败', false, '竟然连上了');
   } catch (e) {
-    check('password 模式：空串密码快速失败', /没给密码/.test(e.message), e.message);
+    check('password 模式：空串密码快速失败', /没有密码/.test(e.message) && /SSH_REMOTE_PASSWORD/.test(e.message), e.message);
   }
   s.close();
 }
@@ -224,6 +224,51 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
     }
     check(`authMode=${bad === undefined ? '(未传)' : JSON.stringify(bad)}：构造时拒绝`, /三选一/.test(threw) && /SSH_REMOTE_AUTH/.test(threw), threw || '没抛错');
   }
+}
+
+// 5. password.xlsx 密码表：解析、查找、优先级、快速失败
+{
+  const XLSX = (await import('xlsx')).default;
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { readPasswords, resolvePassword } = await import('./password-file.js');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-remote-pw-'));
+  const mk = (file, sheets) => {
+    const wb = XLSX.utils.book_new();
+    for (const [name, rows] of Object.entries(sheets)) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+    }
+    XLSX.writeFile(wb, file);
+  };
+  const ok = path.join(dir, 'ok.xlsx');
+  mk(ok, { Sheet1: [['主机名', '密码'], ['host-a', 'pw-a'], ['', '跳过'], ['host-b', 'pw-b']], Sheet2: [['host-c', 'pw-c']] });
+
+  const m1 = readPasswords(ok);
+  check('密码表：多 sheet 全扫、空行跳过', m1['host-a'] === 'pw-a' && m1['host-b'] === 'pw-b' && m1['host-c'] === 'pw-c' && m1['主机名'] === '密码', JSON.stringify(m1));
+
+  check('密码表：文件不存在直接抛错', (() => { try { readPasswords(path.join(dir, 'nope.xlsx')); return false; } catch { return true; } })(), '没抛错');
+
+  const r1 = resolvePassword({ host: 'host-b', envPassword: null, passwordFile: ok });
+  check('密码表：按主机名查到密码', r1.password === 'pw-b' && r1.source === ok, JSON.stringify(r1));
+
+  const r2 = resolvePassword({ host: 'host-x', envPassword: null, passwordFile: ok });
+  check('密码表：主机不在表里 → null', r2.password === null && r2.source === null, JSON.stringify(r2));
+
+  const r3 = resolvePassword({ host: 'host-x', envPassword: 'env-pw', passwordFile: ok });
+  check('密码表：env 显式密码优先于表', r3.password === 'env-pw' && r3.source === 'SSH_REMOTE_PASSWORD', JSON.stringify(r3));
+
+  const r4 = resolvePassword({ host: 'host-a', envPassword: null, passwordFile: path.join(dir, '缺.xlsx') });
+  check('密码表：缺省文件不存在 → null 交给上层指路', r4.password === null && r4.source === null, JSON.stringify(r4));
+
+  const bad = path.join(dir, 'bad.xlsx');
+  fs.writeFileSync(bad, Buffer.from('这不是一个 xlsx 文件'));
+  let threw = '';
+  try { resolvePassword({ host: 'host-a', envPassword: null, passwordFile: bad }); } catch (e) { threw = e.message; }
+  check('密码表：损坏文件抛错不静默', /解析失败/.test(threw), threw || '没抛错');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n结果：${passed} 通过 / ${failed} 失败`);
