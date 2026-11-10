@@ -56,6 +56,7 @@ const userPubBlob = userKey.pubBlob;
 
 // ── mock sshd ───────────────────────────────────────────────────────
 // opts.acceptNone: 服务端接受 none 认证（模拟允许空认证的机器）
+// opts.echoCommand: exec 时把收到的命令串原样回显（用于验证命令包装逻辑）
 function startMockSshd(opts = {}) {
   return new Promise((resolve) => {
     const srv = new SshServer({ hostKeys: [{ key: hostKey.privPem }] });
@@ -87,9 +88,9 @@ function startMockSshd(opts = {}) {
       client.on('ready', () => {
         client.on('session', (accept) => {
           const session = accept();
-          session.on('exec', (accept2) => {
+          session.on('exec', (accept2, reject2, info) => {
             const stream = accept2();
-            stream.stdout.write('mock-ssh-ok');
+            stream.stdout.write(opts.echoCommand ? info.command : 'mock-ssh-ok');
             stream.exit(0);
             stream.end();
             stream.close();
@@ -269,6 +270,41 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
   check('密码表：损坏文件抛错不静默', /解析失败/.test(threw), threw || '没抛错');
 
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// 6. login shell 包装：buildRemoteCommand 组装 + 端到端（mock sshd 回显实际命令串）
+{
+  const { buildRemoteCommand } = await import('./ssh-session.js');
+  const echoPort = await new Promise((res) => {
+    startMockSshd({ acceptNone: true, echoCommand: true }).then((srv) => res(srv.address().port));
+  });
+  const s = new RemoteSession({ host: '127.0.0.1', port: echoPort, username: 'selftest', authMode: 'none', readyTimeout: 10000 });
+
+  try {
+    await s.ensure();
+
+    // 单元：组装形状
+    check('loginShell：默认关闭时不包装', buildRemoteCommand('echo hi') === 'echo hi', buildRemoteCommand('echo hi'));
+    check('loginShell：只有 cwd 时仅前置 cd', buildRemoteCommand('echo hi', { cwd: '/w' }) === `cd '/w' && echo hi`, buildRemoteCommand('echo hi', { cwd: '/w' }));
+    check('loginShell：开启时套 bash -lc', buildRemoteCommand('echo hi', { loginShell: true }) === `bash -lc 'echo hi'`, buildRemoteCommand('echo hi', { loginShell: true }));
+    const { shellQuote } = await import('./ssh-session.js');
+    check('loginShell：开启 + cwd 时 cd 在登录 shell 内', buildRemoteCommand('echo hi', { cwd: '/w', loginShell: true }) === `bash -lc ${shellQuote(`cd ${shellQuote('/w')} && echo hi`)}`, buildRemoteCommand('echo hi', { cwd: '/w', loginShell: true }));
+
+    // 端到端：mock 收到的就是组装结果（验证 exec 选项真的传到了 conn.exec）
+    const r1 = await s.exec('echo hi', { loginShell: true, cwd: '/w' });
+    check('loginShell：端到端——sshd 收到 bash -lc 包装串', r1.stdout === buildRemoteCommand('echo hi', { loginShell: true, cwd: '/w' }), `got ${JSON.stringify(r1.stdout)}`);
+
+    const r2 = await s.exec('echo hi');
+    check('loginShell：端到端——不传选项则原样透传', r2.stdout === 'echo hi', `got ${JSON.stringify(r2.stdout)}`);
+
+    // 引号安全：命令里带单引号不破坏包装（mock 回显 == 组装结果即未串行）
+    const tricky = `echo 'it''s'`;
+    const r3 = await s.exec(tricky, { loginShell: true });
+    check('loginShell：命令含单引号仍完整包装', r3.stdout === buildRemoteCommand(tricky, { loginShell: true }), `got ${JSON.stringify(r3.stdout)}`);
+  } catch (e) {
+    check('loginShell：端到端验证', false, e.message);
+  }
+  s.close();
 }
 
 console.log(`\n结果：${passed} 通过 / ${failed} 失败`);

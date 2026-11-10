@@ -63,6 +63,23 @@ if (!AUTH_MODES.includes(authMode)) {
   process.exit(1);
 }
 
+// ── login shell 开关 ────────────────────────────────────────────────
+// SSH_REMOTE_LOGIN_SHELL：用户命令是否经登录 shell（bash -lc）执行。默认开启——
+// 登录 shell 会加载 /etc/profile → ~/.bash_profile 这条链，nvm/cargo 等在
+// profile 里补 PATH 的工具才能直接用。设 false 回到非登录 shell 的旧行为。
+// 合法值只有 true/false/1/0/yes/no/on/off（大小写不敏感），其余值启动即报错——
+// 配置错了宁可失败，也不猜用户想表达什么。
+const _loginShellRaw = String(process.env.SSH_REMOTE_LOGIN_SHELL ?? 'true').toLowerCase();
+const _loginShellMap = { true: true, '1': true, yes: true, on: true, false: false, '0': false, no: false, off: false };
+const loginShell = _loginShellMap[_loginShellRaw];
+if (loginShell === undefined) {
+  console.error(
+    `[ssh-remote] SSH_REMOTE_LOGIN_SHELL 的值非法："${process.env.SSH_REMOTE_LOGIN_SHELL}"。\n` +
+    `  合法值：true / false / 1 / 0 / yes / no / on / off（默认 true，即登录 shell 方式执行）`,
+  );
+  process.exit(1);
+}
+
 const CONFIG = {
   host: requiredEnv('SSH_REMOTE_HOST', '目标机地址或主机名'),
   port: Number(process.env.SSH_REMOTE_PORT ?? 22),
@@ -75,6 +92,7 @@ const CONFIG = {
   baseDir: requiredEnv('SSH_REMOTE_BASE', '远端工作目录的绝对路径'),
   // ~ 展开的基准。默认从 username 推导，避免用户名不同却仍写死旧 home
   homeDir: process.env.SSH_REMOTE_HOME ?? `/home/${process.env.SSH_REMOTE_USER ?? ''}`,
+  loginShell,
 };
 
 // ── password 模式的密码来源 ─────────────────────────────────────────
@@ -314,6 +332,7 @@ const handlers = {
     const r = await session.exec(command, {
       cwd: cwd ? resolvePath(cwd) : CONFIG.baseDir,
       timeout: timeout ?? 120000,
+      loginShell: CONFIG.loginShell,
     });
     const parts = [];
     if (r.stdout) parts.push(r.stdout);
@@ -462,6 +481,7 @@ const handlers = {
         target: `${CONFIG.username}@${CONFIG.host}:${CONFIG.port}`,
         auth: session.authMethod ?? CONFIG.authMode,
         passwordSource: passwordSource ?? null,
+        loginShell: CONFIG.loginShell,
         keyPath: CONFIG.keyPath,
         baseDir: CONFIG.baseDir,
         server: r.stdout.trim().replace(/\n/g, ' | '),
@@ -504,7 +524,7 @@ const handlers = {
     //     后面那行写 exit 文件的代码根本执行不到 —— 症状是任务明明跑完了，
     //     状态却是 vanished（进程没了、退出码文件也没有）。
     //   - 用 `bash -c` 而不是 `sh -c`：用户命令多半是 bash 语法（管道、&&、数组），
-    //     dash 不认那些。
+    //     dash 不认那些。SSH_REMOTE_LOGIN_SHELL 开启时用 `-lc`，加载登录环境。
     //   - 最后再 `|| true`：命令非零退出时子 shell 返回非零，而我们要的是它的退出码，
     //     不是 runner 自己失败。
     const runnerB64 = Buffer.from(
@@ -512,7 +532,7 @@ const handlers = {
         '#!/usr/bin/env bash',
         'set +e',
         `cd ${JSON.stringify(cwd ? resolvePath(cwd) : CONFIG.baseDir)} || exit 70`,
-        `bash -c ${JSON.stringify(String(command))}`,
+        `bash ${CONFIG.loginShell ? '-lc' : '-c'} ${JSON.stringify(String(command))}`,
         'code=$?',
         `printf '%s' "$code" > ${JSON.stringify(`${dir}/exit`)}`,
         'exit 0',
@@ -724,4 +744,4 @@ process.on('SIGTERM', () => { session.close(); process.exit(0); });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`[ssh-remote] MCP server 已就绪 target=${CONFIG.username}@${CONFIG.host} auth=${CONFIG.authMode}${passwordSource ? `(${passwordSource === 'SSH_REMOTE_PASSWORD' ? 'env' : 'xlsx'})` : ''} base=${CONFIG.baseDir}`);
+console.error(`[ssh-remote] MCP server 已就绪 target=${CONFIG.username}@${CONFIG.host} auth=${CONFIG.authMode}${passwordSource ? `(${passwordSource === 'SSH_REMOTE_PASSWORD' ? 'env' : 'xlsx'})` : ''} base=${CONFIG.baseDir} loginShell=${CONFIG.loginShell ? 'on' : 'off'}`);

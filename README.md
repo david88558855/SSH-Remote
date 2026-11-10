@@ -90,6 +90,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_AUTH` | ✅ | 认证方式，**必填三选一**：`password` `key` `none`（缺省或非法值启动即失败并给指引） |
 | `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填其一：设本变量，或配 password.xlsx 密码表） |
 | `SSH_REMOTE_PASSWORD_FILE` | | 密码表路径，缺省为程序目录下的 `password.xlsx`（`password` 模式且未设 `SSH_REMOTE_PASSWORD` 时使用） |
+| `SSH_REMOTE_LOGIN_SHELL` | | 用户命令是否经登录 shell（`bash -lc`）执行，默认 `true`。合法值 `true/false/1/0/yes/no/on/off`，其余值启动即报错 |
 | `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
 | `SSH_REMOTE_BASE` | ✅ | 远端工作目录，**必须是绝对路径** |
 | `SSH_REMOTE_HOME` | | `~` 展开的基准，默认 `/home/$SSH_REMOTE_USER` |
@@ -112,6 +113,20 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端。
 认证连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys` / 服务端不接受空认证）。
 
+### 登录 shell
+
+`remote_exec` / `remote_exec_bg` 的用户命令默认经**登录 shell**（`bash -lc`）执行，
+会加载 `/etc/profile` → `~/.bash_profile` 这条链——`nvm`、`cargo` 等在 profile 里
+补 PATH 的工具可以直接用，和手动 `ssh` 上去的效果一致。
+
+- sshd 对 exec 请求原本跑的是非登录 shell（`$SHELL -c`），不读任何 profile 文件，
+  这是 `command not found` 的常见根源；`SSH_REMOTE_LOGIN_SHELL` 默认 `true` 补回登录语义
+- 设 `false` 回到非登录 shell 的旧行为；非法值启动即报错
+- 只作用于**用户命令**：内部探活、任务管理等管道命令不套登录 shell，
+  避免 profile 里的 banner 输出污染解析
+- 极少数 profile 会往 stdout 打印内容（欢迎语等），这些行会出现在命令输出里；
+  不想要就设 `SSH_REMOTE_LOGIN_SHELL=false`
+
 密码方式示例：
 
 ```json
@@ -124,7 +139,36 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 }
 ```
 
-密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式及非法 authMode 校验共 13 项断言。
+### 密码表 password.xlsx
+
+不想把密码明文写进 MCP 配置的话，`password` 模式也支持从密码表读取。格式与
+[Remote-SSH](https://github.com/david88558855/Remote-SSH) 的 `password.xlsx` 完全一致，两边可以直接互拷：
+
+| 第 1 列 | 第 2 列 |
+|---|---|
+| 主机名（与 `SSH_REMOTE_HOST` 一致） | 密码 |
+
+规则：
+
+- 位置：缺省找程序目录下的 `password.xlsx`，可用 `SSH_REMOTE_PASSWORD_FILE` 指定其他路径（建议绝对路径）
+- 所有 sheet 都会扫一遍；带表头无妨（表头不会匹配到真实主机名）
+- 优先级：`SSH_REMOTE_PASSWORD` 环境变量 > 密码表——设了 env 就不看表
+- 失败语义：env 和表里都没有该主机 → 启动即报错并指路；文件损坏 → 启动即报错；缺省位置的文件不存在不算错（视为没配密码表）
+- `password.xlsx` 已进 `.gitignore`，真实密码不会被提交；仓库里带模板 `password.example.xlsx`
+
+密码表示例：
+
+```json
+"env": {
+  "SSH_REMOTE_HOST": "192.168.0.110",
+  "SSH_REMOTE_USER": "yourname",
+  "SSH_REMOTE_AUTH": "password",
+  "SSH_REMOTE_PASSWORD_FILE": "/home/yourname/secrets/password.xlsx",
+  "SSH_REMOTE_BASE": "/home/yourname/work"
+}
+```
+
+密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式、非法 authMode 校验、密码表解析及登录 shell 命令包装共 27 项断言。
 
 ## 工具
 

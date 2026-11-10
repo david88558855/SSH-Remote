@@ -21,6 +21,22 @@ export function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * 组装最终发给 sshd 的命令串。
+ *
+ * loginShell=true 时套一层 `bash -lc`：sshd 对 exec 请求跑的是非交互、非登录
+ * shell（$SHELL -c），不读 /etc/profile → ~/.bash_profile 这条链，nvm/cargo 这类
+ * 在 profile 里补 PATH 的工具会 command not found。`-l` 补回登录语义。
+ *
+ * 注意：只在**用户命令**上启用（remote_exec / remote_exec_bg 的用户命令），
+ * 内部探活、任务管理等管道命令不套——profile 里若有 banner 输出会污染解析。
+ */
+export function buildRemoteCommand(command, { cwd, loginShell = false } = {}) {
+  let cmd = cwd ? `cd ${shellQuote(cwd)} && ${command}` : command;
+  if (loginShell) cmd = `bash -lc ${shellQuote(cmd)}`;
+  return cmd;
+}
+
 function truncate(str, maxBytes, label) {
   if (Buffer.byteLength(str) <= maxBytes) return { text: str, truncated: false };
   // 按字节切，可能切在多字节字符中间，replacement char 会显形但不会崩
@@ -208,9 +224,9 @@ export class RemoteSession {
    * 返回 { stdout, stderr, code, signal, timedOut, truncated }
    */
   async exec(command, options = {}) {
-    const { timeout = 120000, maxBytes = 1024 * 1024, cwd } = options;
+    const { timeout = 120000, maxBytes = 1024 * 1024, cwd, loginShell = false } = options;
     const conn = await this.ensure();
-    const cmd = cwd ? `cd ${shellQuote(cwd)} && ${command}` : command;
+    const cmd = buildRemoteCommand(command, { cwd, loginShell });
 
     return new Promise((resolve, reject) => {
       conn.exec(cmd, (err, stream) => {
