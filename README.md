@@ -1,4 +1,4 @@
-# ssh-remote
+# SSH-Remote
 
 常驻 SSH 长连接的 MCP server。让 WorkBuddy / Cursor 这类 AI 编码工具**直接读写远端机器、执行远端命令**，而不是每次调用都新建一次 SSH 连接。
 
@@ -113,20 +113,6 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 注意：`SSH_REMOTE_PASSWORD=""`（空串）视同未配置，不会拿空密码去撞服务端。
 认证连不上时错误信息会带上排查指引（密码错 / `PasswordAuthentication` 被禁 / 公钥没进 `authorized_keys` / 服务端不接受空认证）。
 
-### 登录 shell
-
-`remote_exec` / `remote_exec_bg` 的用户命令默认经**登录 shell**（`bash -lc`）执行，
-会加载 `/etc/profile` → `~/.bash_profile` 这条链——`nvm`、`cargo` 等在 profile 里
-补 PATH 的工具可以直接用，和手动 `ssh` 上去的效果一致。
-
-- sshd 对 exec 请求原本跑的是非登录 shell（`$SHELL -c`），不读任何 profile 文件，
-  这是 `command not found` 的常见根源；`SSH_REMOTE_LOGIN_SHELL` 默认 `true` 补回登录语义
-- 设 `false` 回到非登录 shell 的旧行为；非法值启动即报错
-- 只作用于**用户命令**：内部探活、任务管理等管道命令不套登录 shell，
-  避免 profile 里的 banner 输出污染解析
-- 极少数 profile 会往 stdout 打印内容（欢迎语等），这些行会出现在命令输出里；
-  不想要就设 `SSH_REMOTE_LOGIN_SHELL=false`
-
 密码方式示例：
 
 ```json
@@ -167,6 +153,20 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
   "SSH_REMOTE_BASE": "/home/yourname/work"
 }
 ```
+
+### 登录 shell
+
+`remote_exec` / `remote_exec_bg` 的用户命令默认经**登录 shell**（`bash -lc`）执行，
+会加载 `/etc/profile` → `~/.bash_profile` 这条链——`nvm`、`cargo` 等在 profile 里
+补 PATH 的工具可以直接用，和手动 `ssh` 上去的效果一致。
+
+- sshd 对 exec 请求原本跑的是非登录 shell（`$SHELL -c`），不读任何 profile 文件，
+  这是 `command not found` 的常见根源；`SSH_REMOTE_LOGIN_SHELL` 默认 `true` 补回登录语义
+- 设 `false` 回到非登录 shell 的旧行为；非法值启动即报错
+- 只作用于**用户命令**：内部探活、任务管理等管道命令不套登录 shell，
+  避免 profile 里的 banner 输出污染解析
+- 极少数 profile 会往 stdout 打印内容（欢迎语等），这些行会出现在命令输出里；
+  不想要就设 `SSH_REMOTE_LOGIN_SHELL=false`
 
 密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式、非法 authMode 校验、密码表解析及登录 shell 命令包装共 27 项断言。
 
