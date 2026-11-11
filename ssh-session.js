@@ -24,16 +24,18 @@ export function shellQuote(s) {
 /**
  * 组装最终发给 sshd 的命令串。
  *
- * loginShell=true 时套一层 `bash -lc`：sshd 对 exec 请求跑的是非交互、非登录
- * shell（$SHELL -c），不读 /etc/profile → ~/.bash_profile 这条链，nvm/cargo 这类
- * 在 profile 里补 PATH 的工具会 command not found。`-l` 补回登录语义。
+ * pathPrefix 非空时在最前面 `export PATH=...`：sshd 对 exec 请求跑的是非交互、
+ * 非登录 shell（$SHELL -c），PATH 只有系统默认值，nvm/cargo 这类装在用户目录的
+ * 工具会 command not found。显式补 PATH，其余环境一律不动——可控、输出可预期，
+ * 不像登录 shell 会把 profile 里的 banner 也带进来。
  *
  * 注意：只在**用户命令**上启用（remote_exec / remote_exec_bg 的用户命令），
- * 内部探活、任务管理等管道命令不套——profile 里若有 banner 输出会污染解析。
+ * 内部探活、任务管理等管道命令不套。
  */
-export function buildRemoteCommand(command, { cwd, loginShell = false } = {}) {
-  let cmd = cwd ? `cd ${shellQuote(cwd)} && ${command}` : command;
-  if (loginShell) cmd = `bash -lc ${shellQuote(cmd)}`;
+export function buildRemoteCommand(command, { cwd, pathPrefix } = {}) {
+  let cmd = (pathPrefix ? `export PATH=${shellQuote(pathPrefix)}; ` : '')
+    + (cwd ? `cd ${shellQuote(cwd)} && ` : '')
+    + command;
   return cmd;
 }
 
@@ -224,9 +226,9 @@ export class RemoteSession {
    * 返回 { stdout, stderr, code, signal, timedOut, truncated }
    */
   async exec(command, options = {}) {
-    const { timeout = 120000, maxBytes = 1024 * 1024, cwd, loginShell = false } = options;
+    const { timeout = 120000, maxBytes = 1024 * 1024, cwd, pathPrefix } = options;
     const conn = await this.ensure();
-    const cmd = buildRemoteCommand(command, { cwd, loginShell });
+    const cmd = buildRemoteCommand(command, { cwd, pathPrefix });
 
     return new Promise((resolve, reject) => {
       conn.exec(cmd, (err, stream) => {

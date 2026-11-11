@@ -90,7 +90,7 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 | `SSH_REMOTE_AUTH` | ✅ | 认证方式，**必填三选一**：`password` `key` `none`（缺省或非法值启动即失败并给指引） |
 | `SSH_REMOTE_PASSWORD` | | 密码（`password` 模式必填其一：设本变量，或配 password.xlsx 密码表） |
 | `SSH_REMOTE_PASSWORD_FILE` | | 密码表路径，缺省为程序目录下的 `password.xlsx`（`password` 模式且未设 `SSH_REMOTE_PASSWORD` 时使用） |
-| `SSH_REMOTE_LOGIN_SHELL` | | 用户命令是否经登录 shell（`bash -lc`）执行，默认 `true`。合法值 `true/false/1/0/yes/no/on/off`，其余值启动即报错 |
+| `SSH_REMOTE_PATH` | | 用户命令执行时的 PATH 前缀（冒号分隔），不设 = 不碰 PATH，保持 sshd 默认 |
 | `SSH_REMOTE_KEY` | | 私钥路径，默认 `~/.ssh/id_ed25519`（`key` 模式必填） |
 | `SSH_REMOTE_BASE` | ✅ | 远端工作目录，**必须是绝对路径** |
 | `SSH_REMOTE_HOME` | | `~` 展开的基准，默认 `/home/$SSH_REMOTE_USER` |
@@ -154,21 +154,24 @@ MSYS_NO_PATHCONV=1 SSH_REMOTE_BASE=/home/me/proj node smoke-test.js
 }
 ```
 
-### 登录 shell
+### 自定义 PATH
 
-`remote_exec` / `remote_exec_bg` 的用户命令默认经**登录 shell**（`bash -lc`）执行，
-会加载 `/etc/profile` → `~/.bash_profile` 这条链——`nvm`、`cargo` 等在 profile 里
-补 PATH 的工具可以直接用，和手动 `ssh` 上去的效果一致。
+sshd 对 exec 请求跑的是**非登录 shell**（`$SHELL -c`），PATH 只有系统默认值——
+`nvm`、`cargo` 这类装在用户目录的工具会 `command not found`。
+`SSH_REMOTE_PATH` 用来显式补 PATH：
 
-- sshd 对 exec 请求原本跑的是非登录 shell（`$SHELL -c`），不读任何 profile 文件，
-  这是 `command not found` 的常见根源；`SSH_REMOTE_LOGIN_SHELL` 默认 `true` 补回登录语义
-- 设 `false` 回到非登录 shell 的旧行为；非法值启动即报错
-- 只作用于**用户命令**：内部探活、任务管理等管道命令不套登录 shell，
-  避免 profile 里的 banner 输出污染解析
-- 极少数 profile 会往 stdout 打印内容（欢迎语等），这些行会出现在命令输出里；
-  不想要就设 `SSH_REMOTE_LOGIN_SHELL=false`
+```json
+"env": {
+  "SSH_REMOTE_PATH": "/home/yourname/.nvm/versions/node/v22.12.0/bin:/usr/local/go/bin"
+}
+```
 
-密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式、非法 authMode 校验、密码表解析及登录 shell 命令包装共 27 项断言。
+- 只影响 `remote_exec` / `remote_exec_bg` 的用户命令：命令前缀 `export PATH=<值>`，`cd` 在其后
+- 其余环境一律不动，输出干净可预期（不引入 profile 里的 banner）
+- 不设 / 设空 = 完全不碰 PATH，保持 sshd 默认行为；不做自动探测
+- 取舍：PATH 值自己维护——远端升级 nvm/node 后版本目录会变，需要同步改配置
+
+密码验证也可跑 `node auth-selftest.js`：不需要真实远端机，脚本内起 mock sshd，覆盖密码/私钥/none 三种模式、非法 authMode 校验、密码表解析及 PATH 命令组装共 27 项断言。
 
 ## 工具
 

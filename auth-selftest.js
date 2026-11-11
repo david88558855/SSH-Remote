@@ -272,7 +272,7 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// 6. login shell 包装：buildRemoteCommand 组装 + 端到端（mock sshd 回显实际命令串）
+// 6. 自定义 PATH：buildRemoteCommand 组装 + 端到端（mock sshd 回显实际命令串）
 {
   const { buildRemoteCommand } = await import('./ssh-session.js');
   const echoPort = await new Promise((res) => {
@@ -284,25 +284,25 @@ console.log(`mock sshd=127.0.0.1:${port}  mock sshd(none)=127.0.0.1:${nonePort}`
     await s.ensure();
 
     // 单元：组装形状
-    check('loginShell：默认关闭时不包装', buildRemoteCommand('echo hi') === 'echo hi', buildRemoteCommand('echo hi'));
-    check('loginShell：只有 cwd 时仅前置 cd', buildRemoteCommand('echo hi', { cwd: '/w' }) === `cd '/w' && echo hi`, buildRemoteCommand('echo hi', { cwd: '/w' }));
-    check('loginShell：开启时套 bash -lc', buildRemoteCommand('echo hi', { loginShell: true }) === `bash -lc 'echo hi'`, buildRemoteCommand('echo hi', { loginShell: true }));
+    check('PATH：不设时不碰环境', buildRemoteCommand('echo hi') === 'echo hi', buildRemoteCommand('echo hi'));
+    check('PATH：只有 cwd 时仅前置 cd', buildRemoteCommand('echo hi', { cwd: '/w' }) === `cd '/w' && echo hi`, buildRemoteCommand('echo hi', { cwd: '/w' }));
+    check('PATH：只有前缀时 export 开头', buildRemoteCommand('echo hi', { pathPrefix: '/a:/b' }) === `export PATH='/a:/b'; echo hi`, buildRemoteCommand('echo hi', { pathPrefix: '/a:/b' }));
     const { shellQuote } = await import('./ssh-session.js');
-    check('loginShell：开启 + cwd 时 cd 在登录 shell 内', buildRemoteCommand('echo hi', { cwd: '/w', loginShell: true }) === `bash -lc ${shellQuote(`cd ${shellQuote('/w')} && echo hi`)}`, buildRemoteCommand('echo hi', { cwd: '/w', loginShell: true }));
+    check('PATH：前缀 + cd 时顺序正确', buildRemoteCommand('echo hi', { cwd: '/w', pathPrefix: '/a' }) === `export PATH=${shellQuote('/a')}; cd ${shellQuote('/w')} && echo hi`, buildRemoteCommand('echo hi', { cwd: '/w', pathPrefix: '/a' }));
 
     // 端到端：mock 收到的就是组装结果（验证 exec 选项真的传到了 conn.exec）
-    const r1 = await s.exec('echo hi', { loginShell: true, cwd: '/w' });
-    check('loginShell：端到端——sshd 收到 bash -lc 包装串', r1.stdout === buildRemoteCommand('echo hi', { loginShell: true, cwd: '/w' }), `got ${JSON.stringify(r1.stdout)}`);
+    const r1 = await s.exec('echo hi', { pathPrefix: '/a:/b', cwd: '/w' });
+    check('PATH：端到端——sshd 收到带 export 的命令串', r1.stdout === buildRemoteCommand('echo hi', { pathPrefix: '/a:/b', cwd: '/w' }), `got ${JSON.stringify(r1.stdout)}`);
 
     const r2 = await s.exec('echo hi');
-    check('loginShell：端到端——不传选项则原样透传', r2.stdout === 'echo hi', `got ${JSON.stringify(r2.stdout)}`);
+    check('PATH：端到端——不传选项则原样透传', r2.stdout === 'echo hi', `got ${JSON.stringify(r2.stdout)}`);
 
-    // 引号安全：命令里带单引号不破坏包装（mock 回显 == 组装结果即未串行）
+    // 引号安全：PATH 和命令里带单引号不破坏组装（mock 回显 == 组装结果即未串行）
     const tricky = `echo 'it''s'`;
-    const r3 = await s.exec(tricky, { loginShell: true });
-    check('loginShell：命令含单引号仍完整包装', r3.stdout === buildRemoteCommand(tricky, { loginShell: true }), `got ${JSON.stringify(r3.stdout)}`);
+    const r3 = await s.exec(tricky, { pathPrefix: `/a'b` });
+    check('PATH：PATH/命令含单引号仍完整组装', r3.stdout === buildRemoteCommand(tricky, { pathPrefix: `/a'b` }), `got ${JSON.stringify(r3.stdout)}`);
   } catch (e) {
-    check('loginShell：端到端验证', false, e.message);
+    check('PATH：端到端验证', false, e.message);
   }
   s.close();
 }
